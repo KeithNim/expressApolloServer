@@ -1,26 +1,34 @@
-import { MikroORM } from "@mikro-orm/core";
-import { __prod__, COOKIE_NAME } from "./util/constants";
-import { Post } from "./entities/Post";
+import { __prod__, COOKIE_NAME, PORT } from "./util/constants";
 import express from 'express';
 import { ApolloServer } from 'apollo-server-express'
 import { buildSchema } from 'type-graphql'
 import { validate } from "graphql";
-import { PostResolver } from "./resolvers/posts";
 import { UserResolver } from "./resolvers/users";
 import redis from 'redis';
 import session from 'express-session';
 import connectRedis from 'connect-redis';
 import { MyContext } from "./util/types";
 import cors from "cors"
+import { createConnection } from "typeorm";
+import { User } from "./entities/User";
 
 
 
 const main = async () => {
-    const orm = await MikroORM.init();
-    await orm.getMigrator().up();
-
-
-    const app = express();
+    try {
+        __prod__ ? await createConnection() : await createConnection({
+          type: 'postgres',
+          host: 'localhost',
+          port: 5432,
+          username: 'postgres',
+          password: 'Nk95nub',
+          database: 'iob-test',
+          entities: [User],
+          synchronize:true,
+          logging: true,
+        })
+    
+        const app = express();
 
     app.use(cors({
         origin: "http://localhost:3000",
@@ -48,10 +56,10 @@ const main = async () => {
 
     const apolloServer = new ApolloServer({
         schema: await buildSchema({
-            resolvers: [ PostResolver, UserResolver],
+            resolvers: [ UserResolver],
             validate: false
         }),
-        context: ({req, res}):MyContext => ({ em: orm.em, req, res })
+        context: ({req, res}):MyContext => ({ req, res })
     })
 
     apolloServer.applyMiddleware({ app, cors:false })
@@ -59,12 +67,12 @@ const main = async () => {
     app.get('/', (req, res) => {
         res.send('hello')
     })
-
-    app.listen(4000, () => {
-        console.log("server lsitening at port 4000")
-    })
-    // const post = orm.em.create(Post, {title:"fuck"})
-    // await orm.em.persistAndFlush(post)
+    
+        app.listen(PORT, () => console.log(`App running on port ${PORT}`))
+      } catch (e) {
+        console.error(e)
+        process.exit()
+      }
 }
 
 main();

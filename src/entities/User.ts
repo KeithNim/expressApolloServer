@@ -1,30 +1,32 @@
-import { Entity, PrimaryKey, Property } from "@mikro-orm/core";
+import { Entity, Column, CreateDateColumn, UpdateDateColumn, PrimaryGeneratedColumn, BaseEntity } from "typeorm";
 import { ObjectType, Field } from "type-graphql";
-import uuid from "uuid"
 
 
 //Field is for gql, comment out to disable field from query
 @ObjectType()
 @Entity()
-export class User {
-  @Field(()=> uuid)
-  @PrimaryKey()
+export class User extends BaseEntity{
+  constructor(user?: User) {
+    super()
+    Object.assign(this, user)
+  }
+
+  @Field(()=> String)
+  @PrimaryGeneratedColumn('uuid')
   id!: string;
   
   @Field(()=>String)
-  @Property({type: 'text',unique:true})
+  @Column({type: 'text',unique:true})
   username!: string;
   
-  @Property({type: 'text'})
+  @Column({type: 'text'})
   password!: string;
   
   @Field(()=>String)
-  @Property({type:'date'})
-  createdAt = new Date();
+  @CreateDateColumn({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
+  createdAt: Date | string
 
   @Field(()=>String)
-  @Property({ type:'date', onUpdate: () => new Date() })
-  updatedAt = new Date();
-
-
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt: Date | string
 }

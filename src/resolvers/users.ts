@@ -1,12 +1,10 @@
-import { Resolver, Query, Ctx, Arg, Int, Mutation, InputType, Field, ObjectType } from "type-graphql";
+import { Resolver, Query, Ctx, Arg, Mutation, InputType, Field, ObjectType } from "type-graphql";
 import { User } from "../entities/User";
 import { MyContext } from "src/util/types";
 import argon2 from 'argon2';
-import { EntityManager } from '@mikro-orm/postgresql';
 import { defaultPlaygroundOptions } from "apollo-server-express";
 import { COOKIE_NAME } from "../util/constants";
-import { sendEmail } from "src/util/sendEmail";
-import { v4 as uuidv4 } from 'uuid'
+import { sendEmail } from "../util/sendEmail";
 
 @InputType()
 class UsernamePasswordInput {
@@ -17,6 +15,7 @@ class UsernamePasswordInput {
     password: string
 }
 
+@InputType()
 class ChangePasswordInput {
     @Field()
     id: string
@@ -26,6 +25,9 @@ class ChangePasswordInput {
 
     @Field()
     newPassword: string
+
+    @Field()
+    newPassword2: string
 }
 
 @ObjectType()
@@ -50,36 +52,34 @@ class FieldError {
 export class UserResolver {
     @Query(() => User, { nullable: true })
     async me(
-        @Ctx() { req, em }: MyContext): Promise<User | null> {
+        @Ctx() { req}: MyContext): Promise<User | undefined> {
 
         if (!req.session!.userUd) {
-            return null;
+            return undefined;
         }
-        const user = await em.findOne(User, { id: req.session!.userId });
+        const user = await User.findOne({ id: req.session!.userId });
         return user
     }
 
     @Query(() => [User])
-    users(
-        @Ctx() { em }: MyContext): Promise<User[]> {
+    users(): Promise<User[]> {
 
-        return em.find(User, {});
+        return User.find();
     }
 
     @Query(() => User, { nullable: true })
     user(
-        @Arg("id", () => Int) id: string,
-        @Ctx() { em }: MyContext): Promise<User | null> {
+        @Arg("id", () => String) id: string): Promise<User | undefined> {
 
-        return em.findOne(User, { id });
+        return User.findOne( id );
     }
 
     @Mutation(() => UserResponse)
     async login(
         @Arg('options') options: UsernamePasswordInput,
-        @Ctx() { em, req }: MyContext): Promise<UserResponse> {
+        @Ctx() { req }: MyContext): Promise<UserResponse> {
 
-        const user = await em.findOne(User, { username: options.username });
+        const user = await User.findOne({ username: options.username });
         if (!user) {
             return {
                 errors: [{
@@ -104,7 +104,7 @@ export class UserResolver {
     @Mutation(() => UserResponse)
     async createUser(
         @Arg('options') option: UsernamePasswordInput,
-        @Ctx() { em, req }: MyContext): Promise<UserResponse> {
+        @Ctx() { req }: MyContext): Promise<UserResponse> {
         if (option.username.length <= 0) {
             return {
                 errors: [{
@@ -125,18 +125,15 @@ export class UserResolver {
         let user
 
         try {
-            const result = await (em as EntityManager)
-                .createQueryBuilder(User)
-                .getKnexQuery()
-                .insert({
-                    id: uuidv4(),
-                    username: option.username,
-                    password: hashedPassword,
-                    created_at: new Date(),
-                    updated_at: new Date(),
-                }).returning("*");
-
-            user = result[0];
+            const result = await User.createQueryBuilder('user').insert()
+            .into(User)
+            .values([
+                { username: option.username, password: hashedPassword }, 
+             ])
+            .execute();
+            
+            user = await User.findOne(result.raw[0].id)
+                
         }
         catch (err) {
             console.log(err)
@@ -150,20 +147,19 @@ export class UserResolver {
             }
         }
 
-        req.session!.userId = user.id
+        // req.session!.userId = user.id
         return { user };
     }
 
     @Mutation(() => Boolean)
     async deleteUser(
-        @Arg("id", () => Int) id: string,
-        @Ctx() { em }: MyContext): Promise<boolean> {
+        @Arg("id", () => String) id: string): Promise<boolean> {
 
-        const user = await em.findOne(User, { id });
+        const user = await User.findOne( id );
         if (!user) {
             return false;
         }
-        em.remove(User, { id })
+        User.delete( id )
         return true
     }
 
@@ -190,31 +186,12 @@ export class UserResolver {
         })
     }
 
-    @Mutation(() => Boolean)
-    async changePassword(
-        @Arg("id", () => String) id: string,
-        @Ctx() { em }: MyContext): Promise<boolean> {
-
-        const user = await em.findOne(User, { id });
-        if (!user) {
-            return false;
-        }
-
-        await sendEmail().catch(err => {
-            console.log(err)
-            return false
-        })
-
-        return true
-
-    }
-
     @Mutation(() => UserResponse)
-    async ChangePasswordInput(
+    async changePassword(
         @Arg('options') options: ChangePasswordInput,
-        @Ctx() { em, req }: MyContext): Promise<UserResponse> {
+        @Ctx() { req }: MyContext): Promise<UserResponse> {
 
-        const user = await em.findOne(User, { id: options.id });
+        const user = await User.findOne(options.id);
 
         if (user) {
             const isValid = await argon2.verify(user.password, options.password)
@@ -224,9 +201,27 @@ export class UserResolver {
                 }]
             }
 
+            if(options.newPassword!=options.newPassword2){
+                return {
+                    errors: [{
+                        field: "newPassword2", message: "new passwords do not match"
+                    }]
+                }
+            }
+
+            if (options.newPassword.length <= 8) {
+                return {
+                    errors: [{
+                        field: "newPassword",
+                        message: "password length must be longer than 8"
+                    }]
+                }
+            }
+
             //update password
-            user.password = options.password
-            await em.persistAndFlush(user);
+            const hashedPassword = await argon2.hash(options.newPassword)
+            user.password = hashedPassword
+            await User.update({id:options.id},{password:hashedPassword});
 
             return {user:user}
         } else{
